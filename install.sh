@@ -109,7 +109,11 @@ install_xray() {
   "$INSTALL_DIR/bin/xray" version | head -n1
 }
 
-rand_str() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-12}"; }
+rand_str() {
+  local hex
+  hex=$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
+  printf '%s' "${hex:0:${1:-12}}"
+}
 
 public_ip() {
   curl -4 -fsSL --max-time 5 https://ifconfig.me/ip 2>/dev/null \
@@ -121,15 +125,15 @@ public_ip() {
 prompt() {
   local var="$1" msg="$2" def="${3:-}"
   local val=""
-  if [[ "${PANEL_NONINTERACTIVE:-0}" == "1" ]] || [[ ! -t 0 ]]; then
+  if [[ "${PANEL_NONINTERACTIVE:-0}" == "1" ]] || [[ ! -r /dev/tty ]]; then
     eval "val=\${$var:-}"
     [[ -z "$val" ]] && val="$def"
   else
     if [[ -n "$def" ]]; then
-      read -rp "$msg [$def]: " val || true
+      read -rp "$msg [$def]: " val </dev/tty || true
       val=${val:-$def}
     else
-      read -rp "$msg: " val || true
+      read -rp "$msg: " val </dev/tty || true
     fi
   fi
   eval "$var=\"\$val\""
@@ -170,7 +174,7 @@ PASSWORD="${PANEL_PASSWORD:-}"
 PORT="${PANEL_PORT:-}"
 VPN_PORT="${PANEL_VPN_PORT:-}"
 prompt USERNAME "Логин панели" "admin"
-if [[ -z "${PASSWORD}" && ( "${PANEL_NONINTERACTIVE:-0}" == "1" || ! -t 0 ) ]]; then
+if [[ -z "${PASSWORD}" && "${PANEL_NONINTERACTIVE:-0}" == "1" ]]; then
   PASSWORD="$(rand_str 12)"
 fi
 if [[ -z "${PASSWORD}" ]]; then
@@ -181,8 +185,8 @@ prompt PORT "Порт панели" "2053"
 prompt HOST "Публичный IP/домен для ключей" "$HOST"
 prompt VPN_PORT "Порт VPN (VLESS Reality)" "443"
 CREATE_INBOUND="${CREATE_INBOUND:-Y}"
-if [[ "${PANEL_NONINTERACTIVE:-0}" != "1" && -t 0 ]]; then
-  read -rp "Создать рабочий инбаунд VLESS Reality сейчас? [Y/n]: " CREATE_INBOUND || true
+if [[ "${PANEL_NONINTERACTIVE:-0}" != "1" && -r /dev/tty ]]; then
+  read -rp "Создать рабочий инбаунд VLESS Reality сейчас? [Y/n]: " CREATE_INBOUND </dev/tty || true
   CREATE_INBOUND=${CREATE_INBOUND:-Y}
 fi
 
