@@ -1,0 +1,12 @@
+/bin/
+/data/*.db
+/data/*.log
+/data/xray.json
+/web/node_modules
+/web/dist
+/web/dist-ssr
+node_modules
+*.exe
+.DS_Store
+.env
+.env.*
