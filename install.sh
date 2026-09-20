@@ -21,6 +21,15 @@ die()  { echo -e "${red}[Kite]${plain} $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "Нужен root: sudo bash install.sh"
 [[ "$(uname -s)" == Linux ]] || die "Скрипт для Linux VPS."
 
+avail="$(df -Pm / | awk 'NR==2{print $4}')"
+if [[ "${avail:-0}" -lt 1500 ]]; then
+  warn "мало места: ${avail:-?} MB свободно. Чищу кэш…"
+  apt-get clean >/dev/null 2>&1 || true
+  rm -rf /root/go/pkg/mod /root/go/pkg/mod/cache /tmp/go* /tmp/node* /tmp/xray* /tmp/*.zip /tmp/*.tgz
+  avail="$(df -Pm / | awk 'NR==2{print $4}')"
+  [[ "${avail:-0}" -lt 800 ]] && die "на диске ${avail:-0} MB. Нужно хотя бы ~1.5 GB. Расширь диск или удали лишнее: df -h"
+fi
+
 arch="$(uname -m)"
 case "$arch" in
   x86_64|amd64) GOARCH=amd64; NODE_ARCH=x64; XRAY_ASSET=Xray-linux-64.zip ;;
@@ -41,10 +50,10 @@ install_pkgs() {
     ubuntu|debian|armbian)
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -y
-      apt-get install -y curl wget tar unzip ca-certificates git xz-utils
+      apt-get install -y curl wget tar unzip ca-certificates git xz-utils build-essential
       ;;
     centos|rhel|rocky|almalinux|fedora)
-      (yum install -y curl wget tar unzip ca-certificates git xz || dnf install -y curl wget tar unzip ca-certificates git xz)
+      (yum install -y curl wget tar unzip ca-certificates git xz gcc make || dnf install -y curl wget tar unzip ca-certificates git xz gcc make)
       ;;
     *)
       warn "неизвестный дистрибутив ${ID:-}, ставлю без пакетного менеджера"
@@ -116,15 +125,19 @@ install_xray() {
 build_panel() {
   log "собираю панель…"
   export PATH="/usr/local/go/bin:/usr/local/bin:$PATH"
+  export GOTOOLCHAIN=local
+  export CGO_ENABLED=1
   cd "$SRC/web"
-  npm install
+  npm install --no-audit --no-fund
   npm run build
+  rm -rf node_modules
   cd "$SRC"
   mkdir -p "$INSTALL_DIR/web"
   rm -rf "$INSTALL_DIR/web/dist"
   cp -a web/dist "$INSTALL_DIR/web/dist"
-  CGO_ENABLED=0 go build -o "$INSTALL_DIR/panel" ./cmd/panel
+  go build -o "$INSTALL_DIR/panel" ./cmd/panel
   chmod 755 "$INSTALL_DIR/panel"
+  go clean -modcache >/dev/null 2>&1 || true
 }
 
 rand_str() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-12}"; }
