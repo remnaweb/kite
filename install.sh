@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Kite — как 3X-UI: качает готовый бинарник, на VPS ничего не собирает.
 #
-#   bash <(curl -Ls https://raw.githubusercontent.com/remnaweb/kite/main/install.sh)
+#   bash <(curl -fsSL https://github.com/remnaweb/kite/releases/download/nightly/install.sh)
 #
 set -euo pipefail
 
@@ -18,7 +18,7 @@ die()  { echo -e "${red}[Kite]${plain} $*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "Нужен root: sudo bash install.sh"
 [[ "$(uname -s)" == Linux ]] || die "Скрипт для Linux VPS."
-log "installer 3"
+log "installer 4 — без вопросов, логин и пароль сгенерирую сам"
 
 # Старый инсталлятор тащил Go+Node и забивал диск — вычищаем это.
 rm -rf /usr/local/kite-src /tmp/go* /tmp/node* /tmp/xray* /tmp/kite* /root/go/pkg
@@ -128,23 +128,6 @@ public_ip() {
     || echo ""
 }
 
-prompt() {
-  local var="$1" msg="$2" def="${3:-}"
-  local val=""
-  if [[ "${PANEL_NONINTERACTIVE:-0}" == "1" ]] || [[ ! -r /dev/tty ]]; then
-    val="${!var}"
-    [[ -z "$val" ]] && val="$def"
-  else
-    if [[ -n "$def" ]]; then
-      read -rp "$msg [$def]: " val </dev/tty || true
-      val=${val:-$def}
-    else
-      read -rp "$msg: " val </dev/tty || true
-    fi
-  fi
-  printf -v "$var" '%s' "$val"
-}
-
 enable_bbr() {
   if sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q bbr; then
     return
@@ -176,26 +159,14 @@ set +e
 set +u
 set +o pipefail
 
-HOST="$(public_ip)"
-echo
-echo -e "${green}════ данные админки ════${plain}"
-USERNAME="${PANEL_USERNAME:-}"
-PASSWORD="${PANEL_PASSWORD:-}"
-PORT="${PANEL_PORT:-}"
-VPN_PORT="${PANEL_VPN_PORT:-}"
-prompt USERNAME "Логин панели" "admin"
-if [[ -z "${PASSWORD}" ]]; then
-  gen="$(rand_str 12)"
-  prompt PASSWORD "Пароль панели (пусто = случайный ${gen})" "$gen"
-fi
-prompt PORT "Порт панели" "2053"
-prompt HOST "Публичный IP/домен для ключей" "$HOST"
-prompt VPN_PORT "Порт VPN (VLESS Reality)" "443"
+HOST="${PANEL_HOST:-$(public_ip)}"
+USERNAME="${PANEL_USERNAME:-$(rand_str 8)}"
+PASSWORD="${PANEL_PASSWORD:-$(rand_str 12)}"
+PORT="${PANEL_PORT:-2053}"
+VPN_PORT="${PANEL_VPN_PORT:-443}"
 CREATE_INBOUND="${CREATE_INBOUND:-Y}"
-if [[ "${PANEL_NONINTERACTIVE:-0}" != "1" && -r /dev/tty ]]; then
-  read -rp "Создать рабочий инбаунд VLESS Reality сейчас? [Y/n]: " CREATE_INBOUND </dev/tty || true
-  CREATE_INBOUND=${CREATE_INBOUND:-Y}
-fi
+
+log "логин и пароль сгенерированы, вопросов не будет"
 
 cat >"$ENV_DIR/panel.env" <<EOF
 PANEL_LISTEN=0.0.0.0:${PORT}
@@ -246,7 +217,7 @@ if [[ -n "$LINK" ]]; then
   echo "Импортируй в v2rayN / Streisand / Happ / Hiddify"
 fi
 echo
-echo "Управление:  panelvpn"
+echo "Потом сменишь в панели → Настройки, или: panelvpn"
 echo "Доступ:      cat /etc/panelvpn/install-result.env"
 echo "Если с другой сети не открывается — открой порт ${PORT} в файрволе провайдера."
 echo

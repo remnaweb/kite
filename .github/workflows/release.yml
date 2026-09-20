@@ -61,6 +61,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
@@ -72,10 +74,12 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           prerelease: false
-          files: kite-linux-*.tar.gz
+          files: |
+            kite-linux-*.tar.gz
+            install.sh
           body: |
             Готовые бинарники Linux (amd64 / arm64). На VPS ничего не собирается.
 
             ```
-            bash <(curl -Ls https://raw.githubusercontent.com/remnaweb/kite/main/install.sh)
+            bash <(curl -fsSL https://github.com/remnaweb/kite/releases/download/nightly/install.sh)
             ```
