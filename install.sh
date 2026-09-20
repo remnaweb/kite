@@ -18,6 +18,7 @@ die()  { echo -e "${red}[Kite]${plain} $*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "Нужен root: sudo bash install.sh"
 [[ "$(uname -s)" == Linux ]] || die "Скрипт для Linux VPS."
+log "installer 3"
 
 # Старый инсталлятор тащил Go+Node и забивал диск — вычищаем это.
 rm -rf /usr/local/kite-src /tmp/go* /tmp/node* /tmp/xray* /tmp/kite* /root/go/pkg
@@ -106,13 +107,18 @@ install_xray() {
   install -m 755 "$d/xray" "$INSTALL_DIR/bin/xray"
   cp -f "$d/geoip.dat" "$d/geosite.dat" "$INSTALL_DIR/bin/" 2>/dev/null || true
   rm -rf "$tmp" "$d"
-  "$INSTALL_DIR/bin/xray" version | head -n1
+  local xver
+  xver=$("$INSTALL_DIR/bin/xray" version 2>/dev/null || true)
+  printf '%s\n' "${xver%%$'\n'*}"
 }
 
 rand_str() {
-  local hex
-  hex=$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
-  printf '%s' "${hex:0:${1:-12}}"
+  local chars=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+  local s="" i n="${1:-12}"
+  for ((i = 0; i < n; i++)); do
+    s+=${chars:RANDOM%62:1}
+  done
+  printf '%s' "$s"
 }
 
 public_ip() {
@@ -126,7 +132,7 @@ prompt() {
   local var="$1" msg="$2" def="${3:-}"
   local val=""
   if [[ "${PANEL_NONINTERACTIVE:-0}" == "1" ]] || [[ ! -r /dev/tty ]]; then
-    eval "val=\${$var:-}"
+    val="${!var}"
     [[ -z "$val" ]] && val="$def"
   else
     if [[ -n "$def" ]]; then
@@ -136,7 +142,7 @@ prompt() {
       read -rp "$msg: " val </dev/tty || true
     fi
   fi
-  eval "$var=\"\$val\""
+  printf -v "$var" '%s' "$val"
 }
 
 enable_bbr() {
@@ -166,6 +172,10 @@ install_pkgs
 download_panel
 install_xray
 
+set +e
+set +u
+set +o pipefail
+
 HOST="$(public_ip)"
 echo
 echo -e "${green}════ данные админки ════${plain}"
@@ -174,9 +184,6 @@ PASSWORD="${PANEL_PASSWORD:-}"
 PORT="${PANEL_PORT:-}"
 VPN_PORT="${PANEL_VPN_PORT:-}"
 prompt USERNAME "Логин панели" "admin"
-if [[ -z "${PASSWORD}" && "${PANEL_NONINTERACTIVE:-0}" == "1" ]]; then
-  PASSWORD="$(rand_str 12)"
-fi
 if [[ -z "${PASSWORD}" ]]; then
   gen="$(rand_str 12)"
   prompt PASSWORD "Пароль панели (пусто = случайный ${gen})" "$gen"
