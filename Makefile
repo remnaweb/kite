@@ -14,6 +14,9 @@ xray:
 
 build:
 	cd web && npm run build
+	rm -rf internal/webui/dist
+	mkdir -p internal/webui/dist
+	cp -a web/dist/. internal/webui/dist/
 	go build -o bin/panel ./cmd/panel
 
 tidy:

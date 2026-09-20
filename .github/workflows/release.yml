@@ -1,0 +1,81 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: kite-linux-amd64.tar.gz
+          - os: ubuntu-24.04-arm
+            asset: kite-linux-arm64.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build UI
+        run: |
+          cd web
+          npm ci --no-audit --no-fund
+          npm run build
+          mkdir -p ../internal/webui/dist
+          rm -rf ../internal/webui/dist/*
+          cp -a dist/. ../internal/webui/dist/
+
+      - name: Build panel
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev
+          CGO_ENABLED=1 go build -trimpath -ldflags='-s -w' -o panel ./cmd/panel
+          cp scripts/panelvpn.sh .
+          cp deploy/panelvpn.service .
+          tar -czf "${{ matrix.asset }}" panel panelvpn.sh panelvpn.service
+          ls -lh "${{ matrix.asset }}" panel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Kite nightly
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          prerelease: false
+          files: kite-linux-*.tar.gz
+          body: |
+            Готовые бинарники Linux (amd64 / arm64). На VPS ничего не собирается.
+
+            ```
+            bash <(curl -Ls https://raw.githubusercontent.com/remnaweb/kite/main/install.sh)
+            ```

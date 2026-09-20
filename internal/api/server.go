@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/cors"
 	"gorm.io/gorm"
 
+	"panelvpn/internal/webui"
 	"panelvpn/internal/xray"
 )
 
@@ -89,7 +91,11 @@ func (s *Server) Router(webDist string) http.Handler {
 	if webDist != "" {
 		if st, err := os.Stat(webDist); err == nil && st.IsDir() {
 			r.Handle("/*", spaHandler(webDist))
+			return r
 		}
+	}
+	if sub, err := fs.Sub(webui.Dist, "dist"); err == nil {
+		r.Handle("/*", spaFSHandler(sub))
 	}
 	return r
 }
@@ -111,6 +117,32 @@ func spaHandler(dir string) http.Handler {
 		_ = f.Close()
 		if err != nil || stat.IsDir() {
 			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+			return
+		}
+		fileServer.ServeHTTP(w, r)
+	})
+}
+
+func spaFSHandler(root fs.FS) http.Handler {
+	fileServer := http.FileServer(http.FS(root))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "" {
+			path = "index.html"
+		}
+		f, err := root.Open(path)
+		if err != nil {
+			r = r.Clone(r.Context())
+			r.URL.Path = "/index.html"
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		stat, err := f.Stat()
+		_ = f.Close()
+		if err != nil || stat.IsDir() {
+			r = r.Clone(r.Context())
+			r.URL.Path = "/index.html"
+			fileServer.ServeHTTP(w, r)
 			return
 		}
 		fileServer.ServeHTTP(w, r)

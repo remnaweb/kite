@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kite — установка на VPS, как 3X-UI:
+# Kite — как 3X-UI: качает готовый бинарник, на VPS ничего не собирает.
 #
 #   bash <(curl -Ls https://raw.githubusercontent.com/remnaweb/kite/main/install.sh)
 #
@@ -9,10 +9,8 @@ red='\033[0;31m'; green='\033[0;32m'; yellow='\033[0;33m'; plain='\033[0m'
 INSTALL_DIR=/usr/local/panelvpn
 ENV_DIR=/etc/panelvpn
 XRAY_VERSION="${XRAY_VERSION:-v25.8.3}"
-GO_VERSION="${GO_VERSION:-1.22.10}"
-NODE_VERSION="${NODE_VERSION:-v22.12.0}"
-KITE_REPO="${KITE_REPO:-https://github.com/remnaweb/kite.git}"
-KITE_BRANCH="${KITE_BRANCH:-main}"
+KITE_REPO="${KITE_REPO:-remnaweb/kite}"
+KITE_RELEASE="${KITE_RELEASE:-nightly}"
 
 log()  { echo -e "${green}[Kite]${plain} $*"; }
 warn() { echo -e "${yellow}[Kite]${plain} $*"; }
@@ -21,19 +19,24 @@ die()  { echo -e "${red}[Kite]${plain} $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "Нужен root: sudo bash install.sh"
 [[ "$(uname -s)" == Linux ]] || die "Скрипт для Linux VPS."
 
+# Старый инсталлятор тащил Go+Node и забивал диск — вычищаем это.
+rm -rf /usr/local/kite-src /tmp/go* /tmp/node* /tmp/xray* /tmp/kite* /root/go/pkg
+if [[ -d /usr/local/go ]]; then
+  warn "убираю Go с прошлой установки (~сотни МБ)…"
+  rm -rf /usr/local/go
+fi
+rm -rf /usr/local/node-v22* /usr/local/bin/node /usr/local/bin/npm 2>/dev/null || true
+apt-get clean >/dev/null 2>&1 || true
+
 avail="$(df -Pm / | awk 'NR==2{print $4}')"
-if [[ "${avail:-0}" -lt 1500 ]]; then
-  warn "мало места: ${avail:-?} MB свободно. Чищу кэш…"
-  apt-get clean >/dev/null 2>&1 || true
-  rm -rf /root/go/pkg/mod /root/go/pkg/mod/cache /tmp/go* /tmp/node* /tmp/xray* /tmp/*.zip /tmp/*.tgz
-  avail="$(df -Pm / | awk 'NR==2{print $4}')"
-  [[ "${avail:-0}" -lt 800 ]] && die "на диске ${avail:-0} MB. Нужно хотя бы ~1.5 GB. Расширь диск или удали лишнее: df -h"
+if [[ "${avail:-0}" -lt 250 ]]; then
+  die "на диске ${avail:-0} MB. Нужно ~300 MB. Посмотри: df -h"
 fi
 
 arch="$(uname -m)"
 case "$arch" in
-  x86_64|amd64) GOARCH=amd64; NODE_ARCH=x64; XRAY_ASSET=Xray-linux-64.zip ;;
-  aarch64|arm64) GOARCH=arm64; NODE_ARCH=arm64; XRAY_ASSET=Xray-linux-arm64-v8a.zip ;;
+  x86_64|amd64) GOARCH=amd64; XRAY_ASSET=Xray-linux-64.zip ;;
+  aarch64|arm64) GOARCH=arm64; XRAY_ASSET=Xray-linux-arm64-v8a.zip ;;
   *) die "Архитектура $arch не поддерживается" ;;
 esac
 
@@ -50,10 +53,10 @@ install_pkgs() {
     ubuntu|debian|armbian)
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -y
-      apt-get install -y curl wget tar unzip ca-certificates git xz-utils build-essential
+      apt-get install -y --no-install-recommends curl wget tar unzip ca-certificates
       ;;
     centos|rhel|rocky|almalinux|fedora)
-      (yum install -y curl wget tar unzip ca-certificates git xz gcc make || dnf install -y curl wget tar unzip ca-certificates git xz gcc make)
+      (yum install -y curl wget tar unzip ca-certificates || dnf install -y curl wget tar unzip ca-certificates)
       ;;
     *)
       warn "неизвестный дистрибутив ${ID:-}, ставлю без пакетного менеджера"
@@ -61,52 +64,36 @@ install_pkgs() {
   esac
 }
 
-fetch_src() {
-  local here=""
-  if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
-    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || here=""
-    if [[ -n "$here" && -f "$here/go.mod" ]]; then
-      SRC="$here"
-      log "исходники: $SRC"
-      return
+download_panel() {
+  local asset="kite-linux-${GOARCH}.tar.gz"
+  local url="https://github.com/${KITE_REPO}/releases/download/${KITE_RELEASE}/${asset}"
+  local tmp="/tmp/${asset}"
+  log "скачиваю панель (${asset})…"
+  local ok=0
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if curl -fL --retry 2 --retry-delay 2 -o "$tmp" "$url"; then
+      ok=1
+      break
     fi
+    warn "релиз ещё собирается на GitHub, жду 15с (${i}/10)…"
+    sleep 15
+  done
+  [[ "$ok" == "1" ]] || die "не скачался ${url}. Подожди 2–3 минуты после пуша и повтори."
+  local unpack
+  unpack="$(mktemp -d)"
+  tar -xzf "$tmp" -C "$unpack"
+  [[ -f "$unpack/panel" ]] || die "в архиве нет panel"
+  systemctl stop panelvpn >/dev/null 2>&1 || true
+  mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/data" "$INSTALL_DIR/bin" "$ENV_DIR"
+  install -m 755 "$unpack/panel" "$INSTALL_DIR/panel"
+  if [[ -f "$unpack/panelvpn.sh" ]]; then
+    install -m 755 "$unpack/panelvpn.sh" /usr/local/bin/panelvpn
   fi
-  log "скачиваю Kite из $KITE_REPO …"
-  command -v git >/dev/null 2>&1 || die "нет git"
-  SRC=/usr/local/kite-src
-  rm -rf "$SRC"
-  if ! git clone --depth 1 -b "$KITE_BRANCH" "$KITE_REPO" "$SRC"; then
-    die "не удалось скачать репозиторий. Он должен быть публичным: $KITE_REPO"
+  if [[ -f "$unpack/panelvpn.service" ]]; then
+    cp -f "$unpack/panelvpn.service" /etc/systemd/system/panelvpn.service
   fi
-  [[ -f "$SRC/go.mod" ]] || die "в репозитории нет go.mod"
-}
-
-have_go() {
-  command -v go >/dev/null 2>&1 && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'
-}
-
-install_go() {
-  have_go && { log "Go уже есть: $(go version)"; return; }
-  log "ставлю Go ${GO_VERSION}"
-  local tmp="/tmp/go${GO_VERSION}.tgz"
-  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz" -o "$tmp"
-  rm -rf /usr/local/go
-  tar -C /usr/local -xzf "$tmp"
-  rm -f "$tmp"
-  export PATH="/usr/local/go/bin:$PATH"
-  grep -q '/usr/local/go/bin' /etc/profile || echo 'export PATH=/usr/local/go/bin:$PATH' >> /etc/profile
-}
-
-install_node() {
-  command -v npm >/dev/null 2>&1 && { log "npm уже есть"; return; }
-  log "ставлю Node ${NODE_VERSION}"
-  local name="node-${NODE_VERSION}-linux-${NODE_ARCH}"
-  local tmp="/tmp/${name}.tar.xz"
-  curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/${name}.tar.xz" -o "$tmp"
-  tar -C /usr/local -xJf "$tmp"
-  ln -sfn "/usr/local/${name}/bin/node" /usr/local/bin/node
-  ln -sfn "/usr/local/${name}/bin/npm" /usr/local/bin/npm
-  rm -f "$tmp"
+  rm -rf "$tmp" "$unpack"
 }
 
 install_xray() {
@@ -120,24 +107,6 @@ install_xray() {
   cp -f "$d/geoip.dat" "$d/geosite.dat" "$INSTALL_DIR/bin/" 2>/dev/null || true
   rm -rf "$tmp" "$d"
   "$INSTALL_DIR/bin/xray" version | head -n1
-}
-
-build_panel() {
-  log "собираю панель…"
-  export PATH="/usr/local/go/bin:/usr/local/bin:$PATH"
-  export GOTOOLCHAIN=local
-  export CGO_ENABLED=1
-  cd "$SRC/web"
-  npm install --no-audit --no-fund
-  npm run build
-  rm -rf node_modules
-  cd "$SRC"
-  mkdir -p "$INSTALL_DIR/web"
-  rm -rf "$INSTALL_DIR/web/dist"
-  cp -a web/dist "$INSTALL_DIR/web/dist"
-  go build -o "$INSTALL_DIR/panel" ./cmd/panel
-  chmod 755 "$INSTALL_DIR/panel"
-  go clean -modcache >/dev/null 2>&1 || true
 }
 
 rand_str() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-12}"; }
@@ -190,14 +159,8 @@ open_port() {
 }
 
 install_pkgs
-fetch_src
-install_go
-install_node
-mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/data" "$ENV_DIR"
+download_panel
 install_xray
-build_panel
-cp -f "$SRC/deploy/panelvpn.service" /etc/systemd/system/panelvpn.service
-install -m 755 "$SRC/scripts/panelvpn.sh" /usr/local/bin/panelvpn
 
 HOST="$(public_ip)"
 echo
@@ -223,17 +186,10 @@ if [[ "${PANEL_NONINTERACTIVE:-0}" != "1" && -t 0 ]]; then
   CREATE_INBOUND=${CREATE_INBOUND:-Y}
 fi
 
-export PANEL_DATA="$INSTALL_DIR/data"
-export XRAY_BIN="$INSTALL_DIR/bin/xray"
-export PANEL_WEB="$INSTALL_DIR/web/dist"
-export PANEL_ENV="$ENV_DIR/panel.env"
-export PANEL_LISTEN="0.0.0.0:${PORT}"
-
 cat >"$ENV_DIR/panel.env" <<EOF
 PANEL_LISTEN=0.0.0.0:${PORT}
 PANEL_DATA=${INSTALL_DIR}/data
 XRAY_BIN=${INSTALL_DIR}/bin/xray
-PANEL_WEB=${INSTALL_DIR}/web/dist
 PANEL_ENV=${ENV_DIR}/panel.env
 EOF
 chmod 600 "$ENV_DIR/panel.env"
