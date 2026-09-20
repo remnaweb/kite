@@ -18,7 +18,7 @@ die()  { echo -e "${red}[Kite]${plain} $*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "Нужен root: sudo bash install.sh"
 [[ "$(uname -s)" == Linux ]] || die "Скрипт для Linux VPS."
-log "installer 4 — без вопросов, логин и пароль сгенерирую сам"
+log "installer 5"
 
 # Старый инсталлятор тащил Go+Node и забивал диск — вычищаем это.
 rm -rf /usr/local/kite-src /tmp/go* /tmp/node* /tmp/xray* /tmp/kite* /root/go/pkg
@@ -166,7 +166,14 @@ PORT="${PANEL_PORT:-2053}"
 VPN_PORT="${PANEL_VPN_PORT:-443}"
 CREATE_INBOUND="${CREATE_INBOUND:-Y}"
 
-log "логин и пароль сгенерированы, вопросов не будет"
+export PANEL_LISTEN="0.0.0.0:${PORT}"
+export PANEL_DATA="${INSTALL_DIR}/data"
+export XRAY_BIN="${INSTALL_DIR}/bin/xray"
+export PANEL_ENV="${ENV_DIR}/panel.env"
+mkdir -p "$PANEL_DATA"
+cd "$INSTALL_DIR"
+
+log "логин и пароль пишу в ${PANEL_DATA}/panel.db"
 
 cat >"$ENV_DIR/panel.env" <<EOF
 PANEL_LISTEN=0.0.0.0:${PORT}

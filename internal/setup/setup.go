@@ -104,8 +104,15 @@ func InitReality(conn *gorm.DB, remark string, port int, clientName, publicHost 
 }
 
 func WriteEnvFile(path, listen, dataDir, xrayBin string) error {
-	web := filepath.Join(filepath.Dir(dataDir), "web", "dist")
-	body := fmt.Sprintf("PANEL_LISTEN=%s\nPANEL_DATA=%s\nXRAY_BIN=%s\nPANEL_WEB=%s\n", listen, dataDir, xrayBin, web)
+	if abs, err := filepath.Abs(dataDir); err == nil {
+		dataDir = abs
+	}
+	if xrayBin != "" {
+		if abs, err := filepath.Abs(xrayBin); err == nil {
+			xrayBin = abs
+		}
+	}
+	body := fmt.Sprintf("PANEL_LISTEN=%s\nPANEL_DATA=%s\nXRAY_BIN=%s\nPANEL_ENV=%s\n", listen, dataDir, xrayBin, path)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
